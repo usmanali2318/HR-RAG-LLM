@@ -10,7 +10,9 @@ pinned: false
 
 # ZAKHEERA HR Assistant (RAG)
 
-Employees log in, then ask HR questions in a chat window. The backend finds the relevant passages in the HR policy PDFs (hosted Postgres with pgvector) and looks up the logged-in employee's own record. Gemini writes an answer using only those. If neither supports an answer, the assistant says so and points to HR.
+Zakheera is a fictional AI company and the name of my FYP project (this is not my fyp).
+In order to get a grasp of RAG system essential for our main FYP I decided to build this portfolio project. This system works as HR Assistant which answers Frequently ask questions from the available policy documents and refuses when it does not know or the employee asking has no permission.
+Apart from getting information from policy documents it also takes into account employees rank, role, service, pay, status etc to give a more personalized answer.
 
 ```
 Browser chat  ->  FastAPI /api/chat  ->  1. rewrite follow-up into a standalone question (Gemini)
@@ -24,10 +26,9 @@ Browser chat  ->  FastAPI /api/chat  ->  1. rewrite follow-up into a standalone 
 
 ## Try the demo
 
-**Live demo:** _add your Render link here_
+**Live demo:** https://hr-rag-llm-7e297.containers.snapdeploy.app/login OR **Admin Panel:** https://hr-rag-llm-7e297.containers.snapdeploy.app/admin/login
 
-Everything here is fictional: the company, the 50 employees and their records. Log in with any account below, or use the **Try a demo account** buttons on the login page.
-
+Everything here is fictional: the company, the 50 employees and their records. Log in with any account below.
 | Role | Email | Password | What to try |
 |---|---|---|---|
 | CEO (full access, admin panel) | `usman.ali@zakheera.ai` | `zakheera@usman` | "Who is on a PIP?", open the Admin panel from the avatar menu |
@@ -39,9 +40,9 @@ Everything here is fictional: the company, the 50 employees and their records. L
 
 All 50 logins are in [`data/credentials.csv`](data/credentials.csv). The pattern is `firstname.lastname@zakheera.ai` and `zakheera@firstname`.
 
-Things worth testing: ask Ahmed "What is Hira Baig's salary?" (it refuses), then ask the same as the CEO (it answers). Ask something the policies don't cover and the assistant says it can't answer instead of guessing.
+For starters if you ask regarding other employees' salary as a non managerial role, the assistant will refuse to answer even with a manegerial role you can ask about employees under your own team and no one outside it, the full assistant access is granted to HR heads and CEO.
 
-If someone changes data in the admin panel and breaks the demo, `python -m app.seed --reset` restores it.
+If the demo has broken data, running `python -m app.seed --reset` restores it.
 
 ## 1. Set up the cloud pieces (about 10 minutes)
 
@@ -85,7 +86,7 @@ Who can see what (enforced in `app/people.py` before the prompt is built, so the
 
 One account system: the CEO and the four HR employees open the admin panel with their normal work login (email and password). Signing in to the chat or to `/admin` signs you in to both, and **Log out** in the admin panel signs you out of both. Other employees, including managers and the HR intern, cannot open it.
 
-Optional standalone admin accounts (not employees) also work at `/admin`. The first start creates a super admin from `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env` if you set them. Manage them with `python -m app.admin_users add|list|passwd|remove`.
+
 
 | Tab | What you can do |
 |---|---|
@@ -136,11 +137,4 @@ TEST_DATABASE_URL=postgresql://user:pw@localhost:5432/testdb python -m pytest -q
 ```
 Needs any Postgres with pgvector. No Gemini key needed, the tests replace Gemini with fakes.
 
-## Notes and limits
 
-- Sessions last 12 hours and use an HttpOnly, SameSite cookie. Five wrong passwords lock that email and IP for 10 minutes. Chat history is private to the employee who wrote it. A per-employee rate limit (`RATE_LIMIT_PER_MIN`) protects your Gemini quota.
-- Leave balances, notice, gratuity and provident fund figures are calculated in code from the policy rules (constants at the top of `app/people.py`), not by the model. If a policy changes, update the constant too.
-- This is a demo login system. For real use, replace it with company SSO and move the dummy data to your real HR system.
-- This is a public demo with fake data, so `SHOW_DEMO_LOGINS=true` is fine. Set it to `false` for anything with real data.
-- Model names are set in `.env`. Gemini 2.5 models shut down on 16 October 2026, so the defaults are `gemini-3.5-flash` and `gemini-embedding-001`.
-- Changing the embedding model means re-ingesting everything, since vectors from different models are not comparable.

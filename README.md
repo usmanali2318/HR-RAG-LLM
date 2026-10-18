@@ -1,3 +1,13 @@
+---
+title: Zakheera HR Assistant
+emoji: 🌿
+colorFrom: green
+colorTo: yellow
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # ZAKHEERA HR Assistant (RAG)
 
 Employees log in, then ask HR questions in a chat window. The backend finds the relevant passages in the HR policy PDFs (hosted Postgres with pgvector) and looks up the logged-in employee's own record. Gemini writes an answer using only those. If neither supports an answer, the assistant says so and points to HR.

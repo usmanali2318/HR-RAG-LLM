@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F1EFE3">
+<title>Zakheera HR Assistant</title>
+<link rel="icon" type="image/png" href="/static/img/favicon.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <h1 class="brand-row">
+        <span class="mark"><img src="/static/img/logo.png" alt=""></span>
+        <span class="lockup"><span class="lk-name">Zakheera</span><span class="lk-sub">HR Assistant</span></span>
+      </h1>
+    </div>
+    <button class="avatar" id="avatar" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">--</button>
+    <div class="menu" id="menu" role="menu">
+      <div class="who"><b id="m-name"></b><span id="m-title"></span><span id="m-dept"></span><em id="m-role"></em></div>
+      <a class="btn btn-ghost" id="admin-link" href="/admin" hidden>Admin panel</a>
+      <button class="btn btn-ghost" id="new" type="button">New chat</button>
+      <button class="btn" id="logout" type="button">Log out</button>
+    </div>
+  </header>
+  <div id="log" aria-live="polite"><div class="col" id="col"></div></div>
+  <form class="composer" id="form">
+    <div class="col">
+      <textarea id="input" rows="1" maxlength="1000" placeholder="Ask a question..." aria-label="Your question"></textarea>
+      <button class="btn" id="send" type="submit">Send</button>
+    </div>
+  </form>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const col = $('col'), logEl = $('log'), input = $('input'), send = $('send');
+let me = null, conv = null, starters = [];
+const ROLE = {employee:'Employee access', manager:'Manager access', hr:'HR access', executive:'Executive access'};
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const toBottom = () => { logEl.scrollTop = logEl.scrollHeight; };
+
+function render(text){
+  let html = '', list = false;
+  for (const l of esc(text).split('\n')){
+    const m = l.match(/^\s*[-*]\s+(.*)/);
+    if (m){ if(!list){html+='<ul>';list=true;} html+='<li>'+m[1]+'</li>'; }
+    else { if(list){html+='</ul>';list=false;} if(l.trim()) html+='<p>'+l+'</p>'; }
+  }
+  if (list) html += '</ul>';
+  return html.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+}
+function add(role, text, o = {}){
+  const row = document.createElement('div'); row.className = 'msg ' + role;
+  const b = document.createElement('div'); b.className = 'bubble' + (o.warn ? ' warn' : '');
+  if (role === 'user') b.textContent = text; else b.innerHTML = render(text);
+  const tags = [];
+  if (o.record) tags.push(['Your employee record', true]);
+  const seen = new Set();
+  for (const s of (o.sources || [])){ const k = s.doc + s.section; if (seen.has(k)) continue; seen.add(k); tags.push([s.doc + ' > ' + s.section, false]); }
+  if (tags.length){
+    const w = document.createElement('div'); w.className = 'src';
+    for (const [t, rec] of tags){ const s = document.createElement('span'); s.textContent = t; if (rec) s.className = 'rec'; w.appendChild(s); }
+    b.appendChild(w);
+  }
+  row.appendChild(b); col.appendChild(row);
+  if (o.chips && o.chips.length) chips(o.chips);
+  toBottom(); return row;
+}
+function chips(list){
+  document.querySelectorAll('.chips').forEach(c => c.remove());
+  const c = document.createElement('div'); c.className = 'chips';
+  for (const q of list){ const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = q; b.onclick = () => ask(q); c.appendChild(b); }
+  col.appendChild(c); toBottom();
+}
+function typing(){
+  const row = document.createElement('div'); row.className = 'msg bot typing';
+  row.innerHTML = '<div class="bubble" aria-label="Assistant is typing"><i></i><i></i><i></i></div>';
+  col.appendChild(row); toBottom(); return row;
+}
+async function ask(text){
+  text = (text || '').trim(); if (!text) return;
+  document.querySelectorAll('.chips').forEach(c => c.remove());
+  add('user', text); input.value = ''; input.style.height = 'auto'; send.disabled = true;
+  const t = typing();
+  try {
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message:text, conversation_id:conv})});
+    if (r.status === 401) { location.href = '/login'; return; }
+    const d = await r.json(); t.remove();
+    if (!r.ok) add('bot', d.error || d.detail || 'Something went wrong.', {warn:true});
+    else {
+      conv = d.conversation_id; try { localStorage.setItem('hr_conv_' + me.code, conv); } catch (e) {}
+      add('bot', d.answer, {warn: !d.answered, sources: d.sources, record: d.used_record, chips: d.follow_ups});
+    }
+  } catch (e) { t.remove(); add('bot', 'Could not reach the server. Check your connection and try again.', {warn:true}); }
+  send.disabled = false; input.focus();
+}
+function welcome(){
+  add('bot', 'Hi ' + me.name.split(' ')[0] + '! I can answer HR policy questions and look up your own records, like leave balance or service period. Try one of these:');
+  chips(starters);
+}
+function menu(open){ $('menu').classList.toggle('open', open); $('avatar').setAttribute('aria-expanded', open); }
+$('avatar').onclick = e => { e.stopPropagation(); menu(!$('menu').classList.contains('open')); };
+document.addEventListener('click', e => { if (!$('menu').contains(e.target)) menu(false); });
+$('new').onclick = () => { menu(false); conv = null; try { localStorage.removeItem('hr_conv_' + me.code); } catch (e) {} col.innerHTML = ''; welcome(); };
+$('logout').onclick = async () => { await fetch('/api/logout', {method:'POST'}); location.href = '/login'; };
+$('form').addEventListener('submit', e => { e.preventDefault(); ask(input.value); });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)){ e.preventDefault(); ask(input.value); } });
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 130) + 'px'; });
+
+(async () => {
+  const r = await fetch('/api/me');
+  if (r.status === 401) { location.href = '/login'; return; }
+  me = await r.json(); starters = me.starters; if (me.admin) $('admin-link').hidden = false;
+  $('avatar').textContent = me.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  $('m-name').textContent = me.name; $('m-title').textContent = me.title; $('m-dept').textContent = me.department; $('m-role').textContent = ROLE[me.role] || 'Employee access';
+  try { conv = localStorage.getItem('hr_conv_' + me.code); } catch (e) {}
+  if (conv) {
+    try { const h = await (await fetch('/api/history/' + conv)).json();
+      if (h.messages && h.messages.length) { h.messages.forEach(m => add(m.role === 'user' ? 'user' : 'bot', m.content)); return; } } catch (e) {}
+  }
+  welcome();
+})();
+</script>
+</body>
+</html>

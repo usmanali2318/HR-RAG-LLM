@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F1EFE3">
+<title>Admin | Zakheera HR Assistant</title>
+<link rel="icon" type="image/png" href="/static/img/favicon.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><h1 class="brand-row">
+    <span class="mark" style="width:42px;height:42px;border-radius:12px"><img src="/static/img/logo.png" alt=""></span>
+    <span class="lockup"><span class="lk-name">Zakheera</span><span class="lk-sub">HR Assistant</span></span>
+  </h1></div>
+  <div style="display:flex;align-items:center"><span class="badge">Admin</span><a class="btn btn-ghost" id="chatlink" href="/" hidden style="margin-left:10px;min-height:40px;padding:0 16px;font-size:14px">Chat</a><button class="btn btn-ghost" id="logout" style="margin-left:10px;min-height:40px;padding:0 16px;font-size:14px">Log out</button></div>
+</div>
+<div class="wrap">
+  <nav class="tabs" id="tabs">
+    <button class="tab on" data-t="overview">Overview</button>
+    <button class="tab" data-t="employees">Employees</button>
+    <button class="tab" data-t="policies">Policies</button>
+    <button class="tab" data-t="questions">Questions</button>
+    <button class="tab" data-t="activity">Activity</button>
+  </nav>
+
+  <section class="panel on" id="p-overview">
+    <div class="stats" id="stats"></div>
+    <div class="card2"><h2>Questions per day (last 14 days)</h2><div class="bars" id="bars"></div>
+      <div class="legend"><span><s style="background:var(--primary)"></s>Answered</span><span><s style="background:var(--accent)"></s>Could not answer</span><span><s style="background:var(--muted)"></s>Not allowed</span></div></div>
+    <div class="card2"><h2>Most asked questions we could not answer</h2><p class="hint">These are gaps in your policy documents. Upload or update a policy to close them.</p><div class="list" id="top"></div></div>
+  </section>
+
+  <section class="panel" id="p-employees">
+    <div class="toolbar"><input id="q" type="text" placeholder="Search name, code, title..." aria-label="Search employees"><select id="dept" aria-label="Department"></select>
+      <button class="btn small" id="add">Add employee</button></div>
+    <div class="list" id="emps"></div>
+  </section>
+
+  <section class="panel" id="p-policies">
+    <p class="hint">Upload a policy PDF. A file with the same name replaces the old version and is re-indexed automatically. Indexing a document takes up to a minute.</p>
+    <div class="toolbar"><input type="file" id="file" accept="application/pdf,.pdf" hidden><button class="btn small" id="upload">Upload policy PDF</button><span class="hint" id="upmsg" style="align-self:center;margin:0"></span></div>
+    <div class="list" id="pols"></div>
+  </section>
+
+  <section class="panel" id="p-questions">
+    <p class="hint">What employees asked. Names are hidden on purpose, only the department is shown, because questions can be personal.</p>
+    <div class="seg" id="seg"><button class="tab on" data-k="unanswered">Could not answer</button><button class="tab" data-k="denied">Not allowed</button><button class="tab" data-k="all">All</button></div>
+    <div class="list" id="qs"></div>
+  </section>
+
+  <section class="panel" id="p-activity">
+    <p class="hint">Every admin change is recorded here. Salary values are never written to this log.</p>
+    <div class="list" id="acts"></div>
+  </section>
+</div>
+
+<dialog id="dlg"><form id="form" method="dialog"><h3 id="dtitle"></h3><p class="hint" id="dsub"></p><div class="grid" id="fields"></div>
+  <div class="actions" id="dactions"></div></form></dialog>
+<dialog id="pw"><form method="dialog"><h3>New password</h3><p class="hint" id="pwwho"></p><div class="pwbox" id="pwval"></div>
+  <p class="hint">Shown only once. Share it with the employee securely.</p>
+  <div class="actions"><button type="button" class="btn" id="copy">Copy</button><button class="btn btn-ghost">Done</button></div></form></dialog>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const h = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let ME = null, EMPS = [], kind = 'unanswered';
+
+function toast(msg, bad){ const t = $('toast'); t.textContent = msg; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toast.t); toast.t = setTimeout(() => t.className = '', 3800); }
+async function api(path, opt = {}){
+  const r = await fetch('/api/admin' + path, {headers: {'Content-Type': 'application/json'}, ...opt});
+  if (r.status === 401){ location = '/admin/login'; throw new Error('login'); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok){ const x = d.detail; throw new Error(typeof x === 'string' ? x : (x && x[0] ? (x[0].loc.slice(-1)[0] + ': ' + x[0].msg) : 'Something went wrong')); }
+  return d;
+}
+const when = s => s ? new Date(s).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
+
+/* ---------- tabs ---------- */
+$('tabs').onclick = e => { const b = e.target.closest('.tab'); if (!b) return; show(b.dataset.t); };
+function show(t){
+  document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + t));
+  ({overview, employees: loadEmps, policies: loadPols, questions: loadQs, activity: loadActs})[t]().catch(err => toast(err.message, true));
+}
+
+/* ---------- overview ---------- */
+async function overview(){
+  const d = await api('/overview'), w = d.week;
+  const st = Object.entries(d.by_status).map(([k, v]) => v + ' ' + k.toLowerCase()).join(', ');
+  $('stats').innerHTML = [
+    [d.employees, 'Employees', st], [d.policies, 'Policy documents', d.chunks + ' searchable chunks'],
+    [w.answered + w.unanswered + w.denied, 'Questions this week', w.denied + ' not allowed'],
+    [w.answer_rate == null ? '-' : w.answer_rate + '%', 'Answer rate this week', w.unanswered + ' unanswered']]
+    .map(([n, l, s]) => `<div class="stat"><b>${h(n)}</b><span>${h(l)}</span><span style="display:block;font-size:12px">${h(s)}</span></div>`).join('');
+  const max = Math.max(1, ...d.per_day.map(x => x.answered + x.unanswered + x.denied));
+  $('bars').innerHTML = d.per_day.length ? d.per_day.map(x => {
+    const seg = (n, c) => n ? `<i style="height:${Math.max(4, Math.round(n / max * 110))}px;background:${c}"></i>` : '';
+    return `<div class="barcol" title="${h(x.day)}: ${x.answered} answered, ${x.unanswered} unanswered, ${x.denied} not allowed">${seg(x.answered, 'var(--primary)')}${seg(x.unanswered, 'var(--accent)')}${seg(x.denied, 'var(--muted)')}</div>`;
+  }).join('') : '<div class="empty" style="width:100%">No questions yet.</div>';
+  $('top').innerHTML = d.top_unanswered.length ? d.top_unanswered.map(x => `<div class="item"><b>${h(x.question)}</b><span class="tag warn">${x.times}x</span></div>`).join('') : '<div class="empty">Nothing unanswered. Nice.</div>';
+}
+
+/* ---------- employees ---------- */
+async function loadEmps(){ EMPS = (await api('/employees')).employees; fillDepts(); renderEmps(); }
+function fillDepts(){ const cur = $('dept').value, ds = [...new Set(EMPS.map(e => e.department))].sort();
+  $('dept').innerHTML = '<option value="">All departments</option>' + ds.map(d => `<option>${h(d)}</option>`).join(''); $('dept').value = cur; }
+function renderEmps(){
+  const q = $('q').value.trim().toLowerCase(), d = $('dept').value;
+  const rows = EMPS.filter(e => (!d || e.department === d) && (!q || [e.full_name, e.emp_code, e.title, e.department, e.email].join(' ').toLowerCase().includes(q)));
+  $('emps').innerHTML = rows.length ? rows.map(e => `<button class="item" data-id="${e.id}"><span><b>${h(e.full_name)}</b><span class="sub">${h(e.title)} · ${h(e.department)} · ${h(e.work_location)}</span></span>
+    <span class="tags"><span class="tag mute">${h(e.emp_code)}</span><span class="tag">${h(e.employment_status)}</span>${['hr', 'executive'].includes(e.access_role) ? `<span class="tag alt">${e.access_role === 'hr' ? 'HR access' : 'CEO access'}</span>` : ''}${e.on_pip ? '<span class="tag warn">PIP</span>' : ''}</span></button>`).join('') : '<div class="empty">No employees match.</div>';
+}
+$('q').oninput = renderEmps; $('dept').onchange = renderEmps;
+$('emps').onclick = e => { const b = e.target.closest('.item'); if (b) openForm(EMPS.find(x => x.id == b.dataset.id)); };
+$('add').onclick = () => openForm(null);
+
+const F = [
+  ['full_name','Full name','text'], ['title','Job title','text'], ['department','Department','text'], ['grade','Grade (1 to 7)','number'],
+  ['employment_status','Employment status','select',['Permanent','Probation','Intern','Contract']],
+  ['access_role','Access level','select',['employee','manager','hr','executive']],
+  ['work_location','Work location','text'], ['work_model','Work model','select',['Office','Hybrid','Remote']],
+  ['manager_id','Reports to','manager'], ['join_date','Joined on','date'], ['confirmation_date','Confirmed on','date'],
+  ['end_date','End date (interns, contracts)','date'], ['grade_since','In current grade since','date'],
+  ['gross_salary','Monthly gross, PKR (stipend for interns)','number'], ['last_rating','Last performance rating','select',['',1,2,3,4,5]],
+  ['covered_dependents','Insured dependents','number'], ['annual_used','Annual leave used (days)','number','0.5'],
+  ['casual_used','Casual leave used (days)','number','0.5'], ['sick_used','Sick leave used (days)','number','0.5'],
+  ['on_pip','On a performance improvement plan','check'], ['pf_enrolled','Enrolled in provident fund','check']];
+const CREATE = ['full_name','title','department','grade','employment_status','access_role','work_location','manager_id','join_date','end_date','gross_salary'];
+const NULLABLE = ['manager_id','confirmation_date','end_date','last_rating','covered_dependents'];
+let editing = null;
+
+function input(f, v, create){
+  const [k, label, type, extra] = f, id = 'f_' + k;
+  if (type === 'check') return `<label class="check"><input type="checkbox" id="${id}" ${v ? 'checked' : ''}>${h(label)}</label>`;
+  let el;
+  if (type === 'select'){
+    const dis = k === 'access_role' && ME.level !== 'super' ? 'disabled' : '';
+    el = `<select id="${id}" ${dis}>${extra.map(o => `<option value="${o}" ${String(o) === String(v ?? '') ? 'selected' : ''}>${o === '' ? 'None yet' : h(o)}</option>`).join('')}</select>`;
+  } else if (type === 'manager'){
+    el = `<select id="${id}">${create ? '' : '<option value="">None (CEO only)</option>'}${EMPS.filter(e => !editing || e.id !== editing.id).map(e => `<option value="${e.id}" ${e.id == v ? 'selected' : ''}>${h(e.full_name)} (${h(e.title)})</option>`).join('')}</select>`;
+  } else el = `<input id="${id}" type="${type}" ${extra ? `step="${extra}"` : ''} value="${h(v ?? '')}" ${k === 'department' ? 'list="deptlist"' : ''}>`;
+  return `<div><label for="${id}">${h(label)}</label>${el}</div>`;
+}
+function openForm(emp){
+  editing = emp; const create = !emp, fields = create ? F.filter(f => CREATE.includes(f[0])) : F;
+  $('dtitle').textContent = create ? 'Add employee' : emp.full_name;
+  $('dsub').textContent = create ? 'A work email and a starting password are created automatically.' : `${emp.emp_code} · ${emp.email}` + (ME.level !== 'super' && emp.access_role === 'executive' ? ' · Only the CEO can edit this record' : '');
+  const defaults = {employment_status: 'Permanent', access_role: 'employee', work_location: 'Karachi', grade: 3};
+  $('fields').innerHTML = `<datalist id="deptlist">${[...new Set(EMPS.map(e => e.department))].map(d => `<option value="${h(d)}">`).join('')}</datalist>` +
+    fields.map(f => input(f, create ? defaults[f[0]] : emp[f[0]], create)).join('');
+  $('dactions').innerHTML = `<button class="btn" type="button" id="save">${create ? 'Create employee' : 'Save changes'}</button>` +
+    (create ? '' : `<button class="btn btn-ghost" type="button" id="reset">Reset password</button>` + (ME.level === 'super' ? `<button class="btn danger" type="button" id="del">Delete</button>` : '')) +
+    `<button class="btn btn-ghost" type="button" id="close">Cancel</button>`;
+  $('close').onclick = () => $('dlg').close(); $('save').onclick = () => save(create, fields);
+  if (!create){ $('reset').onclick = resetPw; if ($('del')) $('del').onclick = del; }
+  $('dlg').showModal();
+}
+function read(f, create){
+  const [k,, type] = f, el = $('f_' + k); if (!el) return undefined;
+  if (type === 'check') return el.checked;
+  let v = el.value;
+  if (type === 'number' || type === 'manager' || k === 'last_rating') v = v === '' ? null : Number(v);
+  else if (type === 'date') v = v === '' ? null : v;
+  if (!create && v === null && !NULLABLE.includes(k)) return undefined;
+  return v;
+}
+async function save(create, fields){
+  const body = {};
+  for (const f of fields){ const v = read(f, create); if (v === undefined) continue;
+    if (create){ if (v !== null) body[f[0]] = v; } else if (JSON.stringify(v) !== JSON.stringify(editing[f[0]] ?? null) && !(f[2] === 'select' && f[0] !== 'last_rating' && v === editing[f[0]])) body[f[0]] = v; }
+  if (!create && !Object.keys(body).length){ $('dlg').close(); return toast('Nothing changed.'); }
+  $('save').disabled = true;
+  try {
+    if (create){ const r = await api('/employees', {method: 'POST', body: JSON.stringify(body)}); $('dlg').close(); await loadEmps(); showPw(body.full_name, r.password, r.email); }
+    else { const r = await api('/employees/' + editing.id, {method: 'PUT', body: JSON.stringify(body)}); $('dlg').close(); await loadEmps(); toast(r.changed.length ? 'Saved.' : 'Nothing changed.'); }
+  } catch (err){ toast(err.message, true); }
+  $('save').disabled = false;
+}
+function showPw(name, pw, email){ $('pwwho').textContent = name + (email ? ' · login: ' + email : ''); $('pwval').textContent = pw; $('pw').showModal(); }
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('pwval').textContent); toast('Copied.'); } catch (e) { toast('Select and copy manually.', true); } };
+async function resetPw(){
+  if (!confirm('Reset the password for ' + editing.full_name + '? They will be logged out everywhere.')) return;
+  try { const r = await api(`/employees/${editing.id}/reset-password`, {method: 'POST', body: '{}'}); const n = editing.full_name; $('dlg').close(); showPw(n, r.password); } catch (err){ toast(err.message, true); }
+}
+async function del(){
+  if (!confirm('Permanently delete ' + editing.full_name + '? This cannot be undone.')) return;
+  try { await api('/employees/' + editing.id, {method: 'DELETE'}); $('dlg').close(); await loadEmps(); toast('Deleted.'); } catch (err){ toast(err.message, true); }
+}
+
+/* ---------- policies ---------- */
+async function loadPols(){
+  const ps = (await api('/policies')).policies;
+  $('pols').innerHTML = ps.length ? ps.map(p => `<div class="item"><span><b>${h(p.doc_name)}</b><span class="sub">${h(p.source_file)} · ${h(p.policy_id || 'no id')} · version ${h(p.version || '?')} · ${p.chunks} chunks · updated ${h(when(p.ingested_at))}</span></span>
+    <button class="btn btn-ghost small" data-del="${h(p.source_file)}">Remove</button></div>`).join('') : '<div class="empty">No policies indexed yet. Upload a PDF.</div>';
+}
+$('pols').onclick = async e => { const b = e.target.closest('[data-del]'); if (!b) return;
+  if (!confirm('Remove "' + b.dataset.del + '" from the assistant? It will stop answering from it.')) return;
+  try { await api('/policies/' + encodeURIComponent(b.dataset.del), {method: 'DELETE'}); toast('Removed.'); loadPols(); } catch (err){ toast(err.message, true); } };
+$('upload').onclick = () => $('file').click();
+$('file').onchange = async () => {
+  const f = $('file').files[0]; if (!f) return;
+  $('upload').disabled = true; $('upmsg').textContent = 'Reading and indexing ' + f.name + '...';
+  try { const r = await api('/policies/' + encodeURIComponent(f.name), {method: 'PUT', headers: {'Content-Type': 'application/pdf'}, body: f});
+    toast(`Indexed ${r.chunks} chunks from ${r.title}.`); $('upmsg').textContent = ''; loadPols(); }
+  catch (err){ toast(err.message, true); $('upmsg').textContent = ''; }
+  $('upload').disabled = false; $('file').value = '';
+};
+
+/* ---------- questions and activity ---------- */
+async function loadQs(){
+  const qs = (await api('/questions?kind=' + kind)).questions;
+  $('qs').innerHTML = qs.length ? qs.map(q => `<div class="item"><span><b>${h(q.question)}</b><span class="sub">${h(q.department || 'Unknown')} · ${h(when(q.created_at))}${q.top_score != null ? ' · best match ' + q.top_score.toFixed(2) : ''}</span></span>
+    <span class="tags"><span class="tag ${q.answered ? 'alt' : q.reason === 'access_denied' ? 'mute' : 'warn'}">${q.answered ? 'Answered' : q.reason === 'access_denied' ? 'Not allowed' : 'Could not answer'}</span></span></div>`).join('') : '<div class="empty">Nothing here yet.</div>';
+}
+$('seg').onclick = e => { const b = e.target.closest('.tab'); if (!b) return; kind = b.dataset.k; document.querySelectorAll('#seg .tab').forEach(x => x.classList.toggle('on', x === b)); loadQs().catch(err => toast(err.message, true)); };
+async function loadActs(){
+  const a = (await api('/activity')).activity;
+  $('acts').innerHTML = a.length ? a.map(x => `<div class="item"><span><b>${h(x.actor_name)} · ${h(x.action.replace(/_/g, ' '))}</b><span class="sub">${h(x.target || '')}${x.detail ? ' · ' + h(x.detail) : ''}</span></span><span class="sub">${h(when(x.created_at))}</span></div>`).join('') : '<div class="empty">No changes yet.</div>';
+}
+
+$('logout').onclick = async () => { await fetch('/api/admin/logout', {method: 'POST'}); location = '/admin/login'; };
+(async () => {
+  const me = await fetch('/api/admin/me'); if (me.status === 401){ location = '/admin/login'; return; }
+  ME = await me.json(); document.querySelector('.badge').title = ME.name; if (ME.employee) $('chatlink').hidden = false;
+  EMPS = (await api('/employees')).employees;
+  overview().catch(err => toast(err.message, true));
+})();
+</script>
+</body>
+</html>
